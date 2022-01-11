@@ -1,0 +1,637 @@
+---
+title: "Final Project"
+subtitle: 'Information Visualization'
+author: 'Aviv Mokady, Kesem Adi & Nitzan Zilberman'
+runtime: shiny
+output: rmdformats::material
+css: ['div.csv','costume.css']
+---
+<style type="text/css">
+  body{
+  font-family: Segoe UI;
+  font-size: 14pt;
+  }
+</style>
+
+```{r setup, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, comment = '',
+                      message = FALSE, paged.print = FALSE, 
+                      dpi = 300, fig.width = 8, fig.height = 5, 
+                      fig.align = 'center')
+
+library(tidyverse)
+library(naniar)
+library(rstatix)
+library(ggplot2)
+library(plotly)
+library(ggpubr)
+library(tidylog)
+library(shiny)
+library(crosstalk)
+library(rgdal)
+library(sp)
+library(maps)
+library(ggcorrplot)
+
+
+dat <- read.csv("df_csv.csv", header = TRUE, encoding = "UTF-8")
+dat$subject <- as.character(trimws(dat$subject, which = c("both")))
+dat$district <- as.character(trimws(dat$district, which = c("both")))
+dat$sector <- as.character(trimws(dat$sector, which = c("both")))
+dat$supervision <- as.character(trimws(dat$supervision, which = c("both")))
+
+```
+
+# **About us** {#h1 .tabset} 
+
+##
+
+Hi!\
+We are Aviv, Kesem and Nitzan, 2nd year of master's degree in cognitive psychology.
+
+
+# **About The data** {#h2 .tabset} 
+## About The data
+
+Our data was taken from (link). It describes high schools in Israel and the grades in Bagrut exams of their students.\
+We had four different data frames, for years 2013-2016, and for each year 2017, 2018, 2019.\
+Each row is an observations of exam grades, while each column represents a characteristic of the school or the exam.
+<br />
+
++ 2013 – 2016\
+Contain eight variables: Grades, Number of students, Number of Yahal, Graduation year, Subject, School name, School ID.\
+Observations for 69,638 exams in 315 cities, 976 schools and 118 subjects.
+<br />
+
++ 2017\
+Contain eleven variables: the eight in 2013-2016 and supervision, Sector, and district.\
+Observations for 14,184 exams in 306 cities, 1,063 schools and 110 subjects.
+<br />
+
++ 2018\
+Contain eleven variables, the same as in 2017.\
+Observations for 14,975 exams in 311 cities, 1,020 schools and 109 subjects.
+<br />
+
++ 2019\
+Contain eleven variables, the same as in 2017 and 2018.\
+Observations for 15,192 exams in 320 cities, 1,060 schools and 108 subjects.
+<br />
+
++ Combining\
+Observations for 113,989 exams in 336 cities, 1,174 schools and 130 subjects.\
+
+**Coordination **\
+We knew we wanted to present some of the information on a map, so we looked for a dataframes that includes the  coordinates of the school and the cities we have.\
+The cities were taken from [here]() and the schools taken from [here](). We then combined this information with our data.
+
+
+```{r data, include=FALSE, eval=TRUE}
+
+knitr::kable(head(dat))
+
+
+```
+
+## What's been done
+
+Haaretz newspaper reported the Bagrut grades for 2010-2014. You can find the article [here.](https://www.haaretz.co.il/st/c/prod/global/bugroyot/)\
+<br />
+
+**City - Subject**
+
+In the article, they show interactive graph in which you can select the city and the subject and it will present you
+with the trend along the years.\
+<center>
+![](https://i.postimg.cc/mr512jxs/along-years.png){width=70%}
+</center>
+We find the upper bar, the years, to be irrelevant. Instead, a better way is to make the points on the graph to be interactive so
+clicking on them will change the left information window. 
+<br />
+
+**Big cities - Subject**
+
+Another graph allow you to select a subject and a year and shows you the grades in the big cities.
+<center>
+![](https://i.ibb.co/ysNFW85/grades.png){width=50%}
+</center>
+Looks nice, but where is the grades? We even count the dashed lines and did not understood what are they stand for.\
+More than that, why those cities were chosen? Tel-Aviv is one of the biggest but it's not here... \
+We also recommend to highlight the overall mean grades, right now it's kind of hard to compare to it.
+
+
+## Cleaning
+
+**District, Supervision, and sector** 
+
++ The data of 2013-1016 did not include these variables. We started with complete this for those years data from the other years using the school_id variable. \
++ We turned ‘Haredi’ district into ‘Haredi’ sector.
++ We turned ‘Dati’ supervision into ‘Dati’ sector.
++ we turned ‘Jerusalem Director of Education’ district into its geographic district (Jerusalem).
++ ‘Settlement education’ district was replace with the school geographic district.
+<br />
+
+We remain with six geographic districts (South, center, Tel-Aviv, Jerusalem, Haifa, North), six sectors (Haredi, Dati, Jewish, Badawi, Arab, Druz) and three supervisions (General, Dati, Independent). 
+<br />
+
+**Coordinates** 
+
++ We excluded Cities without coordinates.
++ We excluded schools without coordinates.
+<br />
+
+
+**General cleaning** 
+
++ Removed rows with Missing values.
++ Removed exams with less than 11 students.
+
+
+# **Our Vis** {#h3 .tabset} 
+
+## 5 Yahal
+
+```{r 5 yahal, echo = FALSE, eval = TRUE, out.width="50%", fig.align='center'}
+
+##### Number of students in 5 yahal math or english 
+
+dat1 <- dat
+dat1$subject[dat1$subject == "מתמטיקה"] <- "Math"
+dat1$subject[dat1$subject == "אנגלית"] <- "English"
+x <- which(dat1$subject=="Math")
+y <- which(dat1$subject=="English")
+c <- c(x,y)
+dat1 <- dat1[c,]
+dat1$subject <- as.factor(dat1$subject)
+
+dat1 <- dat1 %>%
+  filter(sector != "NA")
+
+
+server <- function(input, output, session) {
+  
+  #Summarize Data and then Plot
+  data1 <- reactive({
+    req(input$subject)
+    req(input$type)
+    df <- if(input$type == "Absolute"){
+      dat1 %>% 
+      filter(subject %in% input$subject) %>%
+      filter(yahal == 5) %>% 
+      group_by(sector, grad_year) %>%
+      summarise(total = sum(students))
+    }
+    else if(input$type == "Percentage"){
+      dat1 %>% 
+      filter(subject %in% input$subject) %>%
+      group_by(sector, grad_year) %>%
+      summarise(total = sum(students[yahal == 5]) / sum(students))
+    }
+})
+
+    #Plot 
+  output$plot <- renderPlotly({
+    ggplotly(
+      ggplot(data1(),
+             aes(x = grad_year, y = total, colour = sector))+
+      geom_line(size = 1.5) +
+      scale_colour_manual(values=c("יהודי" = "#0d0887",
+                               "דתי" = "#6a00a8",
+                               "חרדי" = "#b12a90",
+                               "דרוזי" = "#e16462",
+                               "בדואי" = "#fca636",
+                               "ערבי" = "#f0f921"))+
+      theme_minimal()+
+      scale_x_continuous(breaks=c(2013, 2014, 2015, 2016, 2017, 2018, 2019))+
+      labs(y = "Number / Percentage of Students in 5 Yahal",
+           x = "Year of graduation")+
+        theme(legend.title=element_blank(),
+              plot.margin=unit(c(1,3,1,1),"cm")),
+      tooltip = c("x", "y")) %>% 
+      layout(yaxis = list(fixedrange = TRUE),
+             xaxis = list(fixedrange = TRUE),
+             margin = list(r = 6, l = 6)) %>% 
+      config(displayModeBar = FALSE)
+  })
+}
+
+ui <- basicPage(
+  h1("Number of students in 5 Yahal - math/english"),
+  selectInput(inputId = "subject",
+              label = "Choose subject",
+              list("Math", "English")),
+  selectInput(inputId = "type",
+              label = "Choose Information Type",
+              list("Absolute","Percentage")),
+  mainPanel(plotlyOutput("plot")),
+  h6("* For anonymization purposes, questionnaires with less than 11 students at the school do not appear in the data. Both the sum of students and percentage of students are callculated for questionnaires that 11 or more students took in a specific school"))
+
+shinyApp(ui, server)
+
+```
+
+## Map
+
+We wanted to see
+
+```{r map prep, echo=FALSE, eval=TRUE, results='hide'}
+
+dat2 <- dat %>%
+  filter(sector != "NA",
+         grad_year == 2019) %>%
+  group_by(school_id, school_name, school_x, school_y) %>%
+  summarise(school_mean = weighted.mean(grades, yahal)) %>%
+  ungroup(school_id, school_name, school_x, school_y) %>%
+  mutate(mean_all = mean(school_mean)) %>%
+  mutate(dev = scale(school_mean))
+
+dat2$rank <- ifelse(dat2$dev > 1.5, "Higest grades", NA)
+dat2$rank <- ifelse(dat2$dev > 0.5 & dat2$dev <= 1.5, "Grades above avg", dat2$rank)
+dat2$rank <- ifelse(dat2$dev < -0.5 & dat2$dev >= -1.5,"Grades below avg", dat2$rank)
+dat2$rank <- ifelse(dat2$dev < -1.5, "Lowest grades", dat2$rank)
+
+dat2 <- na.omit(dat2)
+dat2$rank <- factor(dat2$rank,levels = c("Higest grades",
+                                         "Grades above avg",
+                                         "Grades below avg",
+                                         "Lowest grades" ) )
+
+##### Map
+
+israel <- readOGR(
+  dsn= paste0("C:/Users/אביב/Google Drive/Study/ויזואליזציה של מידע/final_project") ,
+)
+is <- tidy(israel)
+
+westbank <- readRDS("rds.rds", refhook = NULL)
+wb <- tidy(westbank)
+wb$id <- 8
+wb$group <- as.factor(7.1)
+class(is$group)
+
+SP <- rbind(is, wb)
+SP$id[SP$id == 0] <- 4
+
+```
+
+
+```{r map, echo=FALSE, eval=TRUE, message=FALSE, warning=FALSE, fig.show='hold', fig.width=2.3, fig.height=1.5}
+map <- ggplot(SP, aes(long, lat, group = group)) +
+  geom_polygon(alpha = 0.5) +
+  coord_equal() +
+  geom_point(data = dat2, aes(x = school_x, y = school_y,color = rank,
+                            text = paste0(school_name,
+                                          "\nMean Grade: ", round(school_mean,2))),
+             inherit.aes = F, alpha = 0.7, size = 0.9) +
+  scale_colour_manual(values=c("Higest grades" = "green",
+                               "Grades above avg" = "green4",
+                               "Grades below avg" = "firebrick4",
+                               "Lowest grades" = "firebrick1"))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(),axis.line = element_blank(),
+        axis.ticks.x = element_blank(), axis.text.x = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.y = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank())
+
+ggplotly(map, tooltip = "text") %>%
+  layout(legend = list( x = 0.1, y = 0.9))
+
+```
+
+
+
+
+## Top-Bottom Citizenship grades
+
+We wanted to see if there are differences in the core subjects between sectors. More than that, we specifically choose to look at citizenship, because it supposed to concern all Israel population without any distinction or discrimination.
+
+```{r citizenship, echo = FALSE, eval=TRUE, fig.width=2.3, fig.height=1.5}
+
+dat3 <- dat %>%
+  filter(grad_year == 2019,
+         subject == "אזרחות",
+         yahal == 2) %>%
+  group_by(school_id) %>%
+  mutate(mean_school = mean(grades)) %>%
+  ungroup() %>%
+  mutate(mean_all = mean(grades),
+         dev = mean_school-mean_all) %>%
+  arrange(desc(mean_school)) %>%
+  filter(row_number() == 1:5 | row_number() > n()-5) %>%
+  mutate(type = case_when(dev > 0 ~ "Best",
+                        TRUE ~ "Worst"))
+
+ggplotly(
+      ggplot(dat3,
+        aes(x = reorder(school_name, dev), fill = sector, weight = dev, text = paste0("School Average: ", mean_school))) +
+        geom_bar() +
+        scale_fill_manual(values=c("יהודי" = "#0d0887",
+                               "דתי" = "#6a00a8",
+                               "חרדי" = "#b12a90",
+                               "ערבי" = "#f0f921")) +
+        labs(x = "School Name", y = "Deviation from Country Average") +
+        coord_flip() +
+        theme_minimal() +
+        geom_hline(yintercept = 0, size = 2, color = "red") +
+        annotate("text", x = 9.5, y = -10,
+          label = paste0("Country Average:", round(dat3$mean_all[1],2)), color = "red"),
+      tooltip = "text") %>%
+      layout(yaxis = list(fixedrange = TRUE),
+             xaxis = list(fixedrange = TRUE)) %>% 
+      config(displayModeBar = FALSE)
+
+
+```
+
+We see no differences between sectors, they appear the same within the best schools and the worst schools.
+
+## Sector/District Per-unit
+
+
+```{r sector/district comp per unit, echo = FALSE, eval=TRUE}
+
+dat4 <- dat
+dat4$subject[dat4$subject == "מתמטיקה"] <- "Math"
+dat4$subject[dat4$subject == "אנגלית"] <- "English"
+x <- which(dat4$subject=="Math")
+y <- which(dat4$subject=="English")
+c <- c(x,y)
+dat4 <- dat4[c,]
+dat4$subject <- as.factor(dat4$subject)
+
+dat4 <- dat4 %>%
+  filter(sector != "NA")
+
+server <- function(input, output, session) {
+  
+  data4 <- reactive({
+    req(input$subject)
+    req(input$comparison)
+    req(input$yahal)
+    df <- if(input$comparison == "sector"){
+      dat4 %>% 
+      filter(subject %in% input$subject, yahal %in% input$yahal) %>%
+      group_by(sector, grad_year) %>%
+      summarise(students = mean(grades)) %>% 
+      rename(comp = 1)
+    }
+    else if(input$comparison == "district"){
+      dat4 %>% 
+      filter(subject %in% input$subject, yahal %in% input$yahal) %>%
+      group_by(district, grad_year) %>%
+      summarise(students = mean(grades)) %>% 
+      rename(comp = 1)
+    }
+    })
+
+    #Plot 
+  output$plot <- renderPlotly({
+    ggplotly(
+      ggplot(data4(),
+             aes(x = grad_year, y = students, group = comp, color = comp,
+                 text = paste0(comp,
+                               "\nGraduation Year: ", grad_year,
+                               "\nMean Grade: ", round(students,2))))+
+        scale_x_continuous(breaks=c(2013, 2014, 2015, 2016, 2017, 2018, 2019))+
+      geom_line(size = 1.5) +
+      scale_colour_manual(values=c("יהודי" = "#0d0887",
+                               "דתי" = "#6a00a8",
+                               "חרדי" = "#b12a90",
+                               "דרוזי" = "#e16462",
+                               "בדואי" = "#fca636",
+                               "ערבי" = "#f0f921",
+                               "צפון" = "#1a9850",
+                               "חיפה" = "#91cf60",
+                               "תל אביב" = "#d9ef8b",
+                               "מרכז" = "#fee08b",
+                               "ירושלים" = "#fc8d59",
+                               "דרום" = "#d73027"))+
+      theme_minimal()+
+      theme(legend.title=element_blank())+
+      labs(y = "Mean Grade",
+           x = "Year of graduation"),
+      tooltip = c("text")) %>% 
+      layout(yaxis = list(fixedrange = TRUE),
+             xaxis = list(fixedrange = TRUE)) %>% 
+      config(displayModeBar = FALSE)
+  })
+}
+
+ui <- basicPage(
+  h1("Mean Grades pre Sector - math/english"),
+  selectInput(inputId = "subject",
+              label = "Choose subject",
+              list("Math", "English")),
+  selectInput(inputId = "comparison",
+              label = "Choose comparison variable",
+              list("district", "sector")),
+  selectInput(inputId = "yahal",
+              label = "Choose number of yahal",
+              list("3", "4", "5")),
+    mainPanel(plotlyOutput("plot")))
+  
+
+shinyApp(ui, server)
+
+```
+
+## First language - English
+
+WE thought it will be interesting to see if there is a correlation between the student's first language and their grades in English.
+
+```{r first language corr, echo = FALSE, eval=TRUE}
+
+dat5 <- dat %>% 
+  select(c('school_id', 'yahal', 'grad_year', 'subject', 'grades', 'sector'))
+
+dat5$subject[dat5$subject == "אנגלית"] <- "English"
+dat5$subject[dat5$subject == "הבעה עברית"] <- "Hebrew"
+dat5$subject[dat5$subject == "ערבית לערבים"] <- "Arabic"
+dat5$subject[dat5$subject == "ערבית לדרוזים"] <- "Arabic"
+
+english_dat <- dat5[which(dat5$subject=="English"),]
+colnames(english_dat)[4] <- "english"
+colnames(english_dat)[5] <- "english_grades"
+
+hebrew_dat <- dat5[which(dat5$subject=="Hebrew"),]
+colnames(hebrew_dat)[4] <- "first_language"
+colnames(hebrew_dat)[5] <- "first_language_grade"
+
+arabic_dat <- dat5[which(dat5$subject=="Arabic"),]
+colnames(arabic_dat)[4] <- "first_language"
+colnames(arabic_dat)[5] <- "first_language_grade"
+
+dat5 <- rbind(hebrew_dat, arabic_dat)
+dat5 <- merge(x = dat5, y = english_dat,
+              by = c("school_id", "sector", "grad_year"), 
+              all.x = FALSE, all.y = TRUE)
+dat5 <- na.omit(dat5)
+
+
+server <- function(input, output, session) {
+  
+  data5 <- reactive({
+    req(input$yahal)
+    df <- dat5 %>% 
+      filter(yahal.y %in% input$yahal)
+    })
+
+    #Plot 
+  output$plot <- renderPlotly({
+    ggplotly(
+      ggplot(data5(),
+             aes(x = first_language_grade, y = english_grades, color = first_language))+
+        geom_point(alpha = 0.5)+
+        stat_cor(aes(label = paste("r = ", ..r.., sep = " ")), label.x = 50, label.y = c(98,95))+
+        geom_smooth()+
+        scale_color_manual(values=c("#fcd225", "#0d0887"))+
+      theme_minimal()+
+      labs(x = "First Language Mean Grades",
+           y = "English Mean Grades")+
+        theme(plot.margin=unit(c(1,1,1,1),"cm")),
+      tooltip = c("x", "y")) %>% 
+      config(displayModeBar = FALSE)
+  })
+}
+
+ui <- basicPage(
+  h1("Correlation between abilities in a first language and in a second language"),
+  selectInput(inputId = "yahal",
+              label = "Choose how many English yahal",
+              list("3", "4", "5")),
+    mainPanel(plotlyOutput("plot")))
+  
+
+shinyApp(ui, server)
+
+```
+
+We can see that when the first language is Hebrew, the slope is Steeper, especially in 5 Yahal.
+
+
+## Hebrew - History/Literature correlation
+
+Continuing with the correlations, we also wanted to see if there are connections between the linguistic subjects.
+
+```{r hebrew & history/literature corr, echo = FALSE, eval=TRUE}
+
+dat6 <- dat
+dat6$subject[dat6$subject == "הבעה עברית"] <- "Hebrew"
+dat6$subject[dat6$subject == "הסטוריה"] <- "History"
+dat6$subject[dat6$subject == "ספרות"] <- "Literature"
+dat6 <- dat6[dat6$subject == "Hebrew"|
+             dat6$subject == "History"|
+             dat6$subject == "Literature",]
+
+dat6 <- dat6 %>% 
+  filter(yahal == 2) %>% 
+  select(c('school_id', 'grad_year', 'subject', 'grades'))
+
+dat6 <- reshape(dat6, idvar = c("school_id", "grad_year"),
+                timevar = "subject", direction = "wide")
+
+dat6 <- na.omit(dat6)
+colnames(dat6)[3] <- "Hebrew"
+colnames(dat6)[4] <- "History"
+colnames(dat6)[5] <- "Literature"
+
+
+server <- function(input, output, session) {
+  
+  data6 <- reactive({
+    req(input$subject)
+    req(input$Year)
+    df <- if(input$subject == "History"){
+      dat6 %>% 
+      filter(grad_year %in% input$Year) %>%
+      select(c('school_id', 'Hebrew', 'History')) %>%
+      rename(Grades = 3)
+    }
+    else if(input$subject == "Literature"){
+      dat6 %>% 
+      filter(grad_year %in% input$Year) %>% 
+      select(c('school_id', 'Hebrew', 'Literature')) %>% 
+      rename(Grades = 3)
+    }
+    })
+  
+    #Plot 
+  output$plot <- renderPlotly({
+    ggplotly(
+      ggplot(data6(),
+             aes(x = Hebrew, y = Grades))+
+        geom_point(alpha = 0.7)+
+        stat_cor(aes(label = paste("r = ", ..r.., sep = " ")), label.x = 50, label.y = 82)+
+        geom_smooth()+
+        scale_colour_viridis_d(option = "plasma", direction = 1)+
+      theme_minimal()+
+      labs(x = "First Language Mean Grades",
+           y = "Language-Rich Subjects (History / Literature)")+
+        theme(plot.margin=unit(c(1,1,2,1),"cm")),
+      tooltip = c("x", "y")) %>%
+      config(displayModeBar = FALSE)
+  })
+}
+
+ui <- basicPage(
+  h1("Correlation between Hebrew for jewish and History/Literature"),
+  selectInput(inputId = "Year",
+              label = "Choose a graduation year",
+              list("2013", "2014", "2015", "2016", "2017", "2018", "2019")),
+    selectInput(inputId = "subject",
+              label = "Choose subject",
+              list("History", "Literature")),
+    mainPanel(plotlyOutput("plot")))
+
+
+shinyApp(ui, server)
+
+```
+
+## Subject correlation
+
+Continuing with the correlations, we also wanted to see if there are connections between the linguistic subjects.
+
+```{r heatmap, echo = FALSE, eval=TRUE, fig.width=2.3, fig.height=1.5, fig.cap = "*No negative correlations were found"}
+
+dat7 <- dat
+dat7$subject[dat7$subject == "הבעה עברית"] <- "First language"
+dat7$subject[dat7$subject == "ערבית לערבים"] <- "First language"
+dat7$subject[dat7$subject == "ערבית לדרוזים"] <- "First language"
+dat7$subject[dat7$subject == "הסטוריה"] <- "History"
+dat7$subject[dat7$subject == "הסטוריה לבי'ס דרוזי"] <- "History"
+dat7$subject[dat7$subject == "הסטוריה לבי'ס ערבי"] <- "History"
+dat7$subject[dat7$subject == "ספרות"] <- "Literature"
+dat7$subject[dat7$subject == "אנגלית"] <- "English"
+dat7$subject[dat7$subject == "מתמטיקה"] <- "Math"
+dat7$subject[dat7$subject == "אזרחות"] <- "Citizenship"
+
+sub <- c("Math","English","Literature","History","First language","Citizenship")
+
+
+dat7 <- dat7 %>% 
+  filter(subject %in% sub) %>%
+  group_by(school_id, subject) %>%
+  get_summary_stats(grades, type = "mean_sd") %>%
+  select(school_id, subject, mean)
+
+dat7$subject <- as.factor(dat7$subject)
+
+dat7 <- pivot_wider(dat7, names_from = "subject", 
+                      values_from = "mean")
+
+dat7 <- dat7 %>%
+  na.omit(dat7) %>%
+  select(-school_id)
+cormat <- cor(dat7)
+
+
+ggplotly(
+      ggcorrplot(cormat) + 
+  scale_fill_gradient2(limit = c(0,1), low = "blue", high =  "yellow", mid = "purple", midpoint = 0.5),
+      tooltip = c("value")) %>% 
+      config(displayModeBar = FALSE)
+
+
+
+```
